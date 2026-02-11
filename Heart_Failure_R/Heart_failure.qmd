@@ -1,0 +1,876 @@
+---
+title: "Heart_failure"
+author: "Amir A. Seid"
+date: today
+format: 
+  html: 
+    toc: true
+    toc-location: left
+    number-sections: true
+    theme: cosmo
+  pdf: 
+    documentclass: scrreprt
+    number-sections: true
+  docx: 
+    toc: true
+    number-sections: true
+    highlight-style: printing
+execute:
+  echo: false
+  warning: false
+  output: false
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r}
+library(MASS)
+library(naniar)
+library(mice)
+library(brant)
+library(VGAM)
+library(tidyverse)
+library(caret)
+library(kableExtra)
+library(patchwork)
+library(gtsummary)
+
+conflicted::conflicts_prefer(dplyr::select)
+conflicted::conflicts_prefer(dplyr::filter)
+conflicted::conflicts_prefer(dplyr::arrange)
+
+PATH = "../Heart_Failure_py/CSV_datasets/Heart_failure.csv"
+```
+
+```{r for EDA vizplots}
+
+df <- read.csv(PATH)
+
+#Formatting NA values
+df <- df %>% 
+  mutate(across(
+    .cols = everything(),
+    function(x){
+      case_when(x %in% c("?", "-9") ~ NA,
+                TRUE ~ x)
+    }
+  )) %>% 
+  mutate(across(
+    .cols = everything(), as.numeric
+  ))
+
+# Converting to categorical variables
+df <- df %>% 
+  mutate(
+    across(
+      .cols = c("sex", "fbs", "restecg", "exang", "cp"),
+      ~ factor(.)
+    )
+  )
+
+df$num = factor(df$num, levels = c(0, 1, 2, 3, 4), ordered = T)
+
+df <- df %>% 
+  mutate(
+    restecg = factor(case_when(
+      # because we had too few missing values we 
+      # replaced them with the mode value 
+      is.na(restecg) ~ "0",
+      TRUE ~ restecg
+    )
+    ))
+
+df_naplot <- vis_miss(df)
+
+```
+
+```{r report table}
+df_datatypes = vapply(colnames(df),FUN = function(x){
+  paste(class(df[[x]]), collapse = ", ")
+}, FUN.VALUE = character(1)
+  )
+
+# For report table
+df_exp = c(
+  "age"      = "Age in years",
+  "sex"      = "Sex (1 = male; 0 = female)",
+  "cp"       = "Chest pain type (1: typical, 2: atypical, 3: non-anginal, 4: asymptomatic)",
+  "trestbps" = "Resting blood pressure (in mm Hg on admission)",
+  "chol"     = "Serum cholestoral in mg/dl",
+  "fbs"      = "Fasting blood sugar > 120 mg/dl (1 = true; 0 = false)",
+  "restecg"  = "Resting electrocardiographic results",
+  "thalach"  = "Maximum heart rate achieved",
+  "exang"    = "Exercise induced angina (1 = yes; 0 = no)",
+  "oldpeak"  = "ST depression induced by exercise relative to rest",
+  "slope"    = "The slope of the peak exercise ST segment",
+  "ca"       = "Number of major vessels (0-3) colored by flourosopy",
+  "thal"     = "Thalassemia (3 = normal; 6 = fixed defect; 7 = reversable defect)",
+  "num"      = "Diagnosis of heart disease (angiographic disease status)"
+)
+
+
+df_feat = c(rep("feature", 13),
+                "target"
+)
+
+df_na_vals <- sapply(colnames(df),
+         function(x)(100*(round(mean(is.na(df[[x]])), 2)))
+)
+
+df_str_table <- data.frame(
+  Variables = names(df_exp),
+  datatypes = df_datatypes,
+  `feature/target` = df_feat,
+  explanation = df_exp,
+  `Missing Value (in%)` = df_na_vals,
+  row.names = c(1:length(df_exp)),
+  check.names = F
+)
+
+df_str_table[3, 2] = "factor"
+df_str_table[11, 2] =  "ordered, factor"
+
+df_str_table <- df_str_table %>% 
+  arrange(desc(`Missing Value (in%)`)) %>% 
+  mutate(
+    `Missing Value (in%)` = paste0(`Missing Value (in%)`, "%")
+  )
+
+
+gg_table_form <- df_str_table %>%
+  kbl(format = "html",
+      align = "l") %>% 
+  kable_styling(bootstrap_options = c("strip", "bordered", "condensed"))%>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+
+```{r Wrangling Data}
+wrangle <- function(path = PATH){
+
+  df2 <- read.csv(PATH)
+
+###
+#---
+### wrangling
+
+  df2 <- df2 %>% 
+    select(-all_of(c("thal", "ca", "slope", "chol")))
+  
+  df2 <- df2 %>% 
+    mutate(across(
+      .cols = everything(),
+      function(x){
+        case_when(x %in% c("?", "-9") ~ NA,
+                  TRUE ~ x)
+      }
+    )) %>% 
+    mutate(across(
+      .cols = everything(), as.numeric
+    ))
+
+  df2 <- df2 %>% 
+    mutate(
+      across(
+        .cols = c("sex", "fbs", "restecg", "exang", "cp"),
+        ~ factor(.)
+      )
+    )
+
+  df2$num = factor(df2$num, levels = c(0, 1, 2, 3, 4), ordered = T)
+  
+  df2 <- df2 %>% 
+    mutate(
+      restecg = factor(case_when(
+        is.na(restecg) ~ "0",
+        TRUE ~ restecg
+      )
+      ))
+
+  ####
+  
+  ### 
+  # --- splitting data randomly
+  
+  ###
+  set.seed(1000)
+  df2_scramble <- sample(c(1:920), 920)
+
+  df2 <- df2[df2_scramble,]
+  rownames(df2) <- c(1:nrow(df2))
+  return(df2)
+}
+```
+
+```{r Split data}
+df2 <- wrangle(PATH)
+train_dat <- df2[121:nrow(df2),]
+test_dat <- df2[1:120, ]
+
+save(test_dat, file = "test.RData")
+save(train_dat, file = "train.RData")
+```
+
+```{r, Basic NA imputation}
+
+df2 <- train_dat
+my_colnames = colnames(df2)
+
+par(mfrow = c(1, 1))
+
+unique(df2$restecg)
+
+df2$restecg <- factor(df2$restecg,
+                      levels = c(0, 1, 2))
+
+```
+
+```{r}
+
+
+df2 <- df2 %>% 
+  mutate(
+    restecg = factor(case_when(
+      is.na(restecg) ~ "0",
+      TRUE ~ restecg
+    )
+  ))
+
+
+par(mfrow = c(1, 1))
+rest_ecg_dist <-  df2 %>% 
+  ggplot(aes(restecg)) +
+  geom_bar()+
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+  theme_bw() +
+  labs(title = "Distribution of Resting ECG Results") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+```{r}
+rest_ecg_dist
+```
+
+```{r Checking with bars}
+
+
+# We know by design all observations are independent
+# Checking if the proportions are plausible
+
+cat_cols <- my_colnames[sapply(my_colnames, function(x)(is.factor(df2[[x]])))]
+
+bars <- list() 
+
+for (cat_col in cat_cols){
+  
+  bars[[cat_col]] <- ggplot(df2, aes(.data[[cat_col]])) +
+    geom_bar() +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+    theme_bw() +
+    labs(title = paste0("Distribution of ", cat_col))
+}
+
+bars = wrap_plots(bars, ncol = 3)
+
+```
+
+```{r Checking with hists}
+
+# Checking for normality
+
+par(mfrow = c(2, 2))
+num_cols <- my_colnames[sapply(my_colnames, function(x)!(is.factor(df2[[x]])))]
+
+hists = list()
+for (num_col in num_cols){
+  
+  hists[[num_col]] <- ggplot(df2, aes(.data[[num_col]])) +
+    geom_histogram() +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+    theme_bw() +
+    labs(title = paste0("Distribution of ", num_col))
+}
+
+hists = wrap_plots(hists, ncol = 2)
+
+rm(cat_col, cat_cols, train_dat, test_dat, num_col, num_cols)
+```
+
+```{r Imputations rf}
+
+
+features = c( "trestbps", "thalach", "exang", "oldpeak")
+
+predictors = colnames(df2)[!(colnames(df2) %in% features)]
+
+imputed_dat <- df2
+
+my_colnames = colnames(imputed_dat)  
+
+my_colnames[sapply(my_colnames, function(x)(is.factor(df2[[x]])))]
+
+# We used predictive mean matching for numerical variables
+# and Random forest for categorical variables in our first mice model.
+
+mtd = c("pmm", "rf")
+
+methods_vector = c(
+  age = mtd[1],
+  sex = mtd[2],
+  cp = mtd[2],
+  trestbps = mtd[1],
+  fbs = mtd[2],
+  restecg = mtd[2],
+  thalach = mtd[1],
+  exang = mtd[2],
+  oldpeak = mtd[1],
+  num = mtd[2]
+)
+
+na_cols <- colSums(is.na(imputed_dat))
+my_sequence = names(sort(na_cols))
+
+
+imputed_rf <- mice(imputed_dat, m = 5,
+                   method = methods_vector,
+                   maxit = 15,
+                   visitSequence = my_sequence, seed = 1000)
+
+```
+
+```{r imputation lr}
+
+# Our second mice model.
+mtds = c("pmm", "logreg", "polyreg", "polyr")
+
+methods_vector_lr <- c(
+  age = mtds[1],
+  sex = mtds[2],
+  cp = mtds[3],
+  trestbps = mtds[1],
+  fbs = mtds[2],
+  restecg = mtds[3],
+  thalach = mtds[1],
+  exang = mtds[2],
+  oldpeak = mtds[1],
+  num = mtds[4]
+)
+
+
+imputed_lr <- mice(imputed_dat, m = 5,
+                   method = methods_vector_lr,
+                   maxit = 15,
+                   visitSequence = my_sequence, seed = 1000)
+
+```
+
+```{r Imputation validity}
+
+## Checking validity of my MICE model
+
+#density plots
+densityplot_rf <- densityplot(imputed_rf, main = "imputed_rf")
+densityplot_lr <-  densityplot(imputed_lr, main = "imputed_lr")
+
+#stripplots
+striplt_rf <- stripplot(imputed_rf, fbs + exang ~ .imp, main = "imputed rf")
+striplt_lr <- stripplot(imputed_lr, fbs + exang ~ .imp, main = "imputed lr")
+
+#traceplots
+traceplt_rf <- plot(imputed_rf, main = "imputed_rf")
+traceplt_lr <-  plot(imputed_lr, main = "imputed_lr")
+
+```
+
+```{r testing POLR assumptions}
+dat <- mice::complete(imputed_lr, 1)
+
+#1. Proportional Odds / Parallel Lines Assumption (PLA)
+
+test_fit <- MASS::polr(num ~ age + sex + cp + trestbps +
+                   fbs + restecg + thalach + exang + oldpeak, 
+                 data = dat, Hess = TRUE)
+
+## brant test to check PLA
+
+brant_result <- brant(test_fit)
+brant_result[, "probability"] = round(brant_result[, "probability"], 2)
+p1 = list()
+
+p1[[1]] <- dat %>% 
+  filter(!(is.na(exang) | is.na(num))) %>% 
+  count(exang, num) %>% 
+  ggplot(aes(exang, n, fill = num)) + 
+  geom_col(position = "fill")
+
+p1[[2]] <- dat %>% 
+  filter(!(is.na(sex) | is.na(num))) %>% 
+  count(sex, num) %>% 
+  ggplot(aes(sex, n, fill = num)) + 
+  geom_col(position = "fill")
+
+p1[[3]] <- dat %>% 
+  ggplot(aes(x = num, y = age)) +
+  geom_boxplot(varwidth = T)
+
+#To compare with a pval > 0.05 var
+
+p1[[4]] <- dat %>% 
+  ggplot(aes(x = num, y = trestbps)) +
+  geom_boxplot(varwidth = T)
+
+assumption_check_plot <- wrap_plots(p1, ncol = 2)
+
+# PLA failed!!
+
+```
+
+```{r PPO model}
+
+fit_ppo <- with(imputed_lr, 
+                vglm(num ~ age + sex + cp +
+                           trestbps + fbs + restecg +
+                           thalach + exang + oldpeak, 
+                     family = cumulative(parallel = FALSE ~ age + restecg + exang)))
+
+```
+
+```{r Rubins Rule}
+
+# Use Rubins Rule to pool our model
+
+analyses <- fit_ppo$analyses
+
+all_coefs <- sapply(analyses, coef)
+all_var_est <- lapply(analyses, vcov)
+imp_m <- imputed_lr$m
+
+# pooled estimate
+
+pooled_coefs <- rowMeans(all_coefs)
+
+# within variance
+u_var <- Reduce("+", all_var_est) / length(all_var_est)
+u_var <- diag(u_var)
+
+# between variance
+b_var <- apply(all_coefs, 1, var)
+
+#Vt = Vw + Vb + Vb/m
+
+t_var = u_var + b_var + b_var/imp_m
+
+###
+pooled_se = sqrt(t_var)
+z_score = pooled_coefs/ pooled_se
+z_score
+
+L = (b_var + b_var/imp_m)/t_var
+
+dfo = (imp_m - 1)/L^2
+
+vm = nrow(imputed_dat) - length(df)
+
+dfobs = ((vm + 1)/(vm + 3)) * (vm * (1- L))
+dfadj = (dfo * dfobs)/(dfo + dfobs)
+dfadj = floor(dfadj)
+
+
+
+
+ME = sapply(names(dfadj),
+     function(x){
+        qt(0.975, df = dfadj[[x]]) * pooled_se[[x]]
+}
+             )
+
+ME = data.frame(
+  Parameters = names(ME),
+  `Margin of Error` = ME,
+  check.names = F,
+  row.names = 1:length(ME)
+)
+
+ME_table <- ME %>%
+  kbl(format = "html",
+      align = "l") %>% 
+  kable_styling(bootstrap_options = c("strip", "bordered", "condensed"))%>%
+  kable_classic(full_width = F, html_font = "Cambria")
+```
+
+```{r fit your final model}
+
+final_model = analyses[[1]]
+final_model@coefficients <- pooled_coefs
+```
+
+```{r }
+
+load(file = "test.RData")
+
+# To avoid data leakage
+target = test_dat$num %>% unlist()
+test_dat = test_dat[, 1:9]
+
+# adjustment for sensitivity
+
+weight_factor <- df2 %>% 
+  group_by(num) %>% 
+  summarise(
+    perc. = round(n()/nrow(df2), 2)
+  ) %>% 
+  mutate(
+    K = (1/(perc.)^(1/3))/1.3
+  ) %>% select(K) %>% unlist()
+
+###
+test_imp <- mice(test_dat, m = 5, method = methods_vector_lr[1:9],
+                 maxit = 15,
+                 visitSequence = my_sequence, seed = 1000)
+
+test_dat <- mice::complete(test_imp, 1)
+
+pred_probs <- VGAM::predictvglm(final_model, newdata = test_dat, type = "response")
+
+weighted_probs <- sweep(pred_probs, MARGIN = 2, STATS = weight_factor, FUN = "*")
+
+###
+predicted_classes <- unname(apply(pred_probs, 1, which.max) - 1)
+weighted_classes <- unname(apply(weighted_probs, 1, which.max) - 1)
+actual_classes <- target
+```
+
+```{r Diagnost}
+
+Diagnost = data.frame(
+  pred = predicted_classes,
+  real = as.numeric(actual_classes) - 1 # because R used the lvls which start
+)
+
+Diagnost <- Diagnost %>% 
+  mutate(
+    success = if_else(pred == real, T, F),
+    bin_real = if_else(real == 0, T, F),
+    bin_pred = if_else(pred == 0, T, F),
+    abs_err = abs(pred - real),
+    bin_accuracy = if_else(bin_real == bin_pred, "Correct", "Wrong")
+  )
+
+
+
+cat("D1\nAbsolute success Rate: ", mean(Diagnost$success),
+    "\nBinary Accuracy Rate: ", mean(Diagnost$bin_accuracy == "Correct"),
+    "\nMean Predictive Difference: ", mean(Diagnost$abs_err),
+    "\nAverage L: ", -1 * mean(as.numeric(Diagnost$pred) - as.numeric(Diagnost$real)
+                                    )
+)
+
+###
+Diagnost2 = data.frame(
+  pred = as.numeric(weighted_classes),
+  real = as.numeric(actual_classes) - 1
+)
+
+Diagnost2 <- Diagnost2 %>% 
+  mutate(
+    success = if_else(pred == real, T, F),
+    bin_real = if_else(real == 0, T, F),
+    bin_pred = if_else(pred == 0, T, F),
+    abs_err = abs(pred - real),
+    bin_accuracy = if_else(bin_real == bin_pred, "Correct", "Wrong")
+  )
+
+cat("\nD2:\nAbsolute success Rate: ", mean(Diagnost2$success),
+    "\nBinary Accuracy Rate: ", mean(Diagnost2$bin_accuracy == "Correct"),
+    "\nMean Predictive Difference: ", mean(Diagnost2$abs_err),
+    "\nAverage L: ", -1 * mean(as.numeric(Diagnost2$pred) - as.numeric(Diagnost$real)
+                                    )
+)
+
+
+```
+
+```{r Confusion Matrix}
+
+OR <- exp(-pooled_coefs)
+## Diagnostics of the model
+
+  # Confusing matrix
+  # 
+
+real = factor(Diagnost$real,
+              levels = c(0, 1, 2, 3, 4),
+              labels = c(0, 1, 2, 3, 4))
+
+pred = factor(Diagnost$pred,
+              levels = c(0, 1, 2, 3, 4),
+              labels = c(0, 1, 2, 3, 4))
+
+pred2 = factor(Diagnost2$pred,
+              levels = c(0, 1, 2, 3, 4),
+              labels = c(0, 1, 2, 3, 4))
+
+bin_real = factor(Diagnost$bin_real,
+              levels = c(T, F),
+              labels = c("Healthy", "Sick")
+                  )
+
+
+bin_pred = factor(Diagnost$bin_pred,
+              levels = c(T, F),
+              labels = c("Healthy", "Sick")
+                  )
+
+bin_pred2 = factor(Diagnost2$bin_pred,
+              levels = c(T, F),
+              labels = c("Healthy", "Sick")
+                  )
+
+model_cm <- confusionMatrix(real, pred)
+results_diag <- round(model_cm$byClass, 2)
+
+model_cm2 <- confusionMatrix(real, pred2)
+results_diag2 <- round(model_cm2$byClass, 2)
+
+
+bin_model_cm <- confusionMatrix(bin_real, bin_pred)
+bin_model_cm2 <-  confusionMatrix(bin_real, bin_pred2)
+
+bin_model_cm <- data.frame(Metrics = names(bin_model_cm$byClass),
+                            Values = round(bin_model_cm$byClass, 2))%>% 
+  pivot_wider(names_from = Metrics, values_from = Values)
+
+bin_model_cm2 <- data.frame(Metrics = names(bin_model_cm2$byClass),
+                            Values = round(bin_model_cm2$byClass, 2)
+) %>% 
+  pivot_wider(names_from = Metrics, values_from = Values)
+
+
+```
+
+# Building a Prediction Model for Coronary Artery Disease
+
+## Abstract
+
+**Methodology**: This study uses the UCI Heart Disease repository to develop a predictive framework for Coronary Artery Disease (CAD). Python 3.14 was used for data preparation and R 4.5.2for the analysis. Partial Proportional Odds (PPO) model was used to respect ordinal disease severity (Classes 0–4) after variables failed the parallel lines assumption. Missing values were addressed via MICE with specialized logistic regressions, and coefficients were pooled using Rubin’s Rules. A Bayesian-inspired weighting strategy was applied to minimize systemic bias and prioritize clinical safety over raw accuracy.
+
+**Results**: The binary model demonstrated clinical viability with an accuracy of 56% and a balanced accuracy of 84.2% . While the unweighted model achieved a sensitivity of 85% and specificity of 83%, the multinomial version struggled with rare severity stages (Classes 2 and 4). The weighting strategy achieved a 51.5% (from 0.33 to 0.17) reduction in systemic bias, successfully trading absolute success rate for the higher sensitivity required in diagnostic screening.
+
+## Introduction:
+
+Coronary Artery Disease (CAD) remains the leading cause of global mortality, accounting for an estimated 17.8 million deaths annually. Epidemiological trends indicate a shifting burden; while mortality rates have stabilized in high-income countries due to advanced interventions, the prevalence of CAD is surging in developing regions and among younger populations. This "epidemiological transition" presents a critical challenge: the sheer volume of patients at risk is outpacing the availability of specialized diagnostic resources, such as coronary angiography.
+
+Traditional clinical risk scores often struggle with the non-linear complexity of biological data. Machine Learning models have been tuned for accuracy and have extended to include the nuanced and unpredictable nature of medicine. By using the famous data sets, the UCI Cleveland Heart Disease repository, we developed an ML model that can identify patterns hard to check with standard diagnostic methods. Many traditional models collapse the target variable into a binary. In contrary, we respected the ordinal nature of our target variable to consider the nuances. Since three of our variables (age, sex, and exercise-induced angina) couldn’t meet parallel line assumptions, Partial Proportional Odds (PPO) was preferred in the model. The model achieved a binary accuracy of 85% (Healthy vs Sick) and a mean predictive difference of 0.59, showing the model errors tend to fall to the most correct value. While the UCI Heart Disease data is the benchmark in the application of machine learning in healthcare, we believe this report sheds light on a predictive framework to provide actionable diagnostic foresight to clinicians.
+
+## Methods
+
+The infamous UCI Heart Disease data, usually considered a benchmark for applying data science in healthcare, was used for the analysis. The four databases are Cleveland, Switzerland, VA, and Hungarian data sets. These data sets were pooled and merged using Python 3.
+
+### Presented Variables:
+
+The merged csv data had 14 variables (13 features and 1 target variable)
+
+```{r, output = TRUE}
+gg_table_form
+```
+
+### **Data Cleaning**
+
+After skimming for the soundness of the values in our data, we converted our features from characters to their intended types of variables: Nominal, Ordinal, and Numerical. NA value representation was then handled according to the dataset description ( -9 and ?). We also assumed “0” as missing data in cholesterol.
+
+Four variables,
+
+1.  thalassemia type\
+2.  number of major blood vessels as seen by coronary angiography, an expensive process that can be difficult to apply to every patient.\
+3.  Slope of the peak exercise ST segment\
+4.  Cholesterol – there is an unbalanced lack of data in “Switzerland.data”.
+
+These variables were excluded due to the significant amount of missing data they contained.\
+120 observations for the test set and 800 observations for the training set were then selected randomly.
+
+### **Handling Missing Values.**
+
+For restecg (Resting ECG), missing values were negligible (XX%), so we imputed the mode 0.
+
+```{r, output = TRUE}
+rest_ecg_dist
+```
+
+The other feature variables undergo MICE (Multivariate Imputation Chain Equation) after we checked for a sensibly balanced distribution of all our remaining categorical and numerical features using plots, and confirmed that we can use all remaining columns.
+
+Categorical Variables
+
+```{r, output = TRUE}
+bars
+```
+
+Numerical Variables
+
+```{r, output = T}
+hists
+```
+
+We did two MICE imputations: one using PMM - Predictive Mean Matching and Random Forests when fitting, and the other using PMM and specialized Logistic Regressions: Logistic regression (for binary), POLR (for ordinal features), and POLYREG (for categorical features).
+
+We compared two imputation methods using:
+
+1.  Density plot: to check similarity in the distribution of our five imputations,\
+2.  Strip plots: to test if it gives a valid output.\
+3.  Trace plots: to analyze the difference in mean and standard deviation for each loopXX.\
+4.  Selected columns: we take the difference between the real value and the imputed value for two selected columns.
+
+And we chose the MICE model which uses specialized logistic regressions.
+
+```{r, output = T}
+densityplot_lr
+```
+
+```{r, output = T}
+densityplot_rf
+```
+
+### **Building a Regression Model**
+
+While we planned to use a proportional odds logistic regression model (POLR), three of our feature variables, age, sex and exang, failed to meet the Brant test for the Parallel Lines Assumption to proceed with POLR.\
+
+```{r, output = TRUE}
+
+brant_result %>% 
+  kbl(format = "html",
+      align = "l") %>% 
+  kable_styling(bootstrap_options = c("strip", "bordered", "condensed"))%>%
+  kable_classic(full_width = F, html_font = "Cambria")
+```
+
+The plots …
+
+```{r,fig.width=6, fig.height=4, output = TRUE}
+assumption_check_plot
+
+```
+
+Therefore, we chose the Partial Proportional Logistic regression model. This model doesn’t assume for homoscedacity or Parallel assumption tests, and is one of the most flexible regression models. However, feature variables that fit many of the statistical assumptions yield better accuracy than their counterparts.
+
+We build our model by fitting all our imputed datasets. We also used Rubin’s Rule to pool our test model and check if our model is not just random noise using the total variance and the Z-score
+
+```{r, output = TRUE}
+
+analyses <- fit_ppo$analyses
+
+all_coefs <- sapply(analyses, coef)
+all_var_est <- lapply(analyses, vcov)
+imp_m <- imputed_lr$m
+
+# pooled estimate
+pooled_coefs <- rowMeans(all_coefs)
+
+# within variance
+u_var <- Reduce("+", all_var_est) / length(all_var_est)
+u_var <- diag(u_var)
+
+# between variance
+b_var <- apply(all_coefs, 1, var)
+
+#Vt = Vw + Vb + Vb/m
+
+t_var = u_var + b_var + b_var/imp_m
+
+###
+pooled_se = sqrt(t_var)
+z_score = pooled_coefs/ pooled_se
+z_score
+
+L = (b_var + b_var/imp_m)/t_var
+
+dfo = (imp_m - 1)/L^2
+
+vm = nrow(imputed_dat) - length(df)
+
+dfobs = ((vm + 1)/(vm + 3)) * (vm * (1- L))
+dfadj = (dfo * dfobs)/(dfo + dfobs)
+dfadj = floor(dfadj)
+
+
+
+
+ME = sapply(names(dfadj),
+     function(x){
+        qt(0.975, df = dfadj[[x]]) * pooled_se[[x]]
+}
+             )
+
+ME = data.frame(
+  Parameters = names(ME),
+  `Total Variance` = t_var,
+  `degree of freedom` = dfadj,
+  `Margin of Error` = ME,
+  check.names = F,
+  row.names = 1:length(ME)
+)
+
+ME_table <- ME %>%
+  kbl(format = "html",
+      align = "l") %>% 
+  kable_styling(bootstrap_options = c("strip", "bordered", "condensed"))%>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+ME_table
+```
+
+### Tools
+
+Python 3.14 was used for primary data preparation, and R 4.5.2 was used for the analysis.
+
+## Results
+
+Our unweighted model achieved a binary success rate of 83%. Moreover, our model has an absolute success rate of 62.5%. Considering the mean absolute error is 0.6, our model is providing a valuable prediction. However, our data is under predicting. Medicine is known for its inherent nature of caution.
+
+```{r, output = TRUE}
+round(model_cm$byClass, 2) %>% 
+  kbl(format = "html",
+      caption = "Confusion matrix for our unweighted model\n(Multinomial prediction)",
+      align = "l") %>% 
+  kable_styling(bootstrap_options = c("strip", "bordered", "condensed"))%>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+
+bin_model_cm %>% 
+  kbl(format = "html",
+      caption = "Confusion matrix for our unweighted model\n Binomial Prediction(Healthy and Sick)",
+      align = "l") %>% 
+  kable_styling(bootstrap_options = c("strip", "bordered", "condensed"))%>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+
+```
+
+We applied a Bayesian-method-inspired weighting strategy. By considering the cost of missing a diagnosis and the prevalence of rare cases, we aligned our model closer to clinical safety. By applying a cube-root inverse prevalence factor, we achieved a 49% reduction in systemic bias (from -0.33 to -0.17) and a binary accuracy rate of 84.2%, while this resulted in an 8% decrease in the absolute success rate. This trade-off enhances our model’s sensitivity.
+
+```{r, output = TRUE}
+
+round(model_cm2$byClass, 2) %>% 
+  kbl(format = "html",
+      caption = "Confusion matrix for our weighted model\n(Multinomial prediction)",
+      align = "l") %>% 
+  kable_styling(bootstrap_options = c("strip", "bordered", "condensed"))%>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+
+bin_model_cm2 %>% 
+  kbl(format = "html",
+      caption = "Confusion matrix for our weighted model\n Binomial Prediction(Healthy and Sick)",
+      align = "l") %>% 
+  kable_styling(bootstrap_options = c("strip", "bordered", "condensed"))%>%
+  kable_classic(full_width = F, html_font = "Cambria")
+```
+
+## Discussion
+
+This results show us that our model was poor at detecting Class 2 and Class 4 because we had too limited observations for our model to generalize the pattern.
+
+The results of this study shows the inherent challenge of predicting disease severity in imbalanced medical datasets. While the model demonstrated high proficiency in binary classification, performance significantly declined when identifying specific severity stages. Specifically, the model struggled to detect Class 2 and Class 4 cases. This is primarily attributed to the limited number of observations for these categories in the test set, which restricted the model's ability to generalize patterns for end-stage CAD.
+
+These findings suggest that Partial Proportional Odds (PPO) modeling provides a flexible and statistically sound framework for CAD screening, particularly when standard assumptions like parallel lines are violated. Future refinements should focus on larger, multi-center datasets to bolster the representation of rare severity classes and further enhance the model’s predictive foresight.
+
+## Reference:
