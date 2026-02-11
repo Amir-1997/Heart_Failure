@@ -1,5 +1,5 @@
 ---
-title: "Heart_failure"
+title: "Technical Report for Supervisor"
 author: "Amir A. Seid"
 date: "2026-02-11"
 output:
@@ -79,6 +79,7 @@ df <- df %>%
 df_naplot <- vis_miss(df)
 
 ```
+
 
 ```{r report table}
 df_datatypes = vapply(colnames(df),FUN = function(x){
@@ -204,7 +205,10 @@ train_dat <- df2[121:nrow(df2),]
 test_dat <- df2[1:120, ]
 
 save(test_dat, file = "test.RData")
+# write.csv(test_dat, file = "CSV_datasets/test.csv")
+
 save(train_dat, file = "train.RData")
+# write.csv(train_dat, file = "CSV_datasets/train.csv")
 ```
 
 ```{r, Basic NA imputation}
