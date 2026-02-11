@@ -80,7 +80,6 @@ df_naplot <- vis_miss(df)
 
 ```
 
-
 ```{r report table}
 df_datatypes = vapply(colnames(df),FUN = function(x){
   paste(class(df[[x]]), collapse = ", ")
@@ -652,7 +651,7 @@ bin_model_cm2 <- data.frame(Metrics = names(bin_model_cm2$byClass),
 
 ## Purpose
 
-This report documents the internal validation of a prediction model using Kaggle UCI Heart Disease data set. It aims to check the validity for both binary and d-level ordinal classification.
+This report documents the internal validation of a prediction model using Kaggle UCI Heart Disease data set. It aims to check the validity for both binary and 5-level ordinal classification.
 
 ## Brief Summary
 
@@ -660,15 +659,21 @@ This analysis predicts heart disease (CAD) using the [Kaggle UCI Heart Disease d
 
 -   Data cleaning and mice imputation We used Predictive Mean Matching for numerical variables and random forest for categorical variables after cross comparing the imputation results with logistic regression.
 
--   Built a Binary model to classify sick and healthy.
-
-
 -   Testing parallel assumption test (violated) We used Brant's test and visualizations to test the assumptions.
-
 
 -   Built a model using a Partial Proportional Odds logistic. Regression.
 
--   Added a weighted factor (1/(perc.)\^(1/3))/1.3 ) to the predictive value matrix to increase the weight of higher class values.
+-   Used Rubin's Rule to get pooled estimates for our model
+
+-   Built a binary and 5-level ordinal model to classify sick and healthy.
+
+-   Added a weighted factor (w)
+
+    $w = \frac{1}{1.3 \cdot p^{1/3}}$
+
+    where p is the class proportion
+
+-   to the predictive value matrix to increase the weight of higher class values.
 
 ## Results
 
@@ -696,9 +701,6 @@ dt1 %>% cbind(dt2) %>%
 
 ```
 
-
-
-
 ```{r, include = TRUE}
 round(model_cm2$byClass, 2) %>% 
   kbl(format = "html",
@@ -718,9 +720,8 @@ bin_model_cm2 %>%
 
 ## References
 
-1. Heymans MW, Eekhout I. (2019). *Applied Missing Data Analysis*. Amsterdam: VU University.
+1.  Heymans MW, Eekhout I. (2019). *Applied Missing Data Analysis*. Amsterdam: VU University.
 
-2. Kaggle. (2021). UCI Heart Disease Dataset. https://www.kaggle.com/datasets/johnsmith88/heart-disease-dataset
+2.  Kaggle. (2021). UCI Heart Disease Dataset. <https://www.kaggle.com/datasets/johnsmith88/heart-disease-dataset>
 
-3. Arı E. (2014). Parallel Lines Assumption in Ordinal Logistic Regression and Analysis Approaches. 
-*International Interdisciplinary Journal of Scientific Research*, 1:8-23.
+3.  Arı E. (2014). Parallel Lines Assumption in Ordinal Logistic Regression and Analysis Approaches. *International Interdisciplinary Journal of Scientific Research*, 1:8-23.
