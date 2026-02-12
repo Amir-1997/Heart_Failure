@@ -123,8 +123,8 @@ df_str_table <- data.frame(
   check.names = F
 )
 
-df_str_table[3, 2, 5, 6, 8] = "factor"
-df_str_table[11] =  "ordered, factor"
+df_str_table[3, 2] = "factor"
+df_str_table[11, 2] =  "ordered, factor"
 
 df_str_table <- df_str_table %>% 
   arrange(desc(`Missing Value (in%)`)) %>% 
