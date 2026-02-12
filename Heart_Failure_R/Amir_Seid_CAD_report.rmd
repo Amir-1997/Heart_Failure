@@ -39,7 +39,7 @@ PATH = "CSV_datasets/Heart_failure.csv"
 ```
 
 ```{r for EDA vizplots}
-
+                                              #### ----- To create tables for Report ---- ####
 df <- read.csv(PATH)
 
 #Formatting NA values
@@ -66,9 +66,6 @@ df <- df %>%
 
 df$num = factor(df$num, levels = c(0, 1, 2, 3, 4), ordered = T)
 
-df_naplot <- vis_miss(df)
-
-
 df <- df %>% 
   mutate(
     restecg = factor(case_when(
@@ -78,6 +75,9 @@ df <- df %>%
       TRUE ~ restecg
     )
     ))
+
+df_naplot <- vis_miss(df)
+
 ```
 
 ```{r report table}
@@ -123,8 +123,8 @@ df_str_table <- data.frame(
   check.names = F
 )
 
-df_str_table[3, 2] = "factor"
-df_str_table[11, 2] =  "ordered, factor"
+df_str_table[3, 2, 5, 6, 8] = "factor"
+df_str_table[11] =  "ordered, factor"
 
 df_str_table <- df_str_table %>% 
   arrange(desc(`Missing Value (in%)`)) %>% 
@@ -142,10 +142,14 @@ gg_table_form <- df_str_table %>%
 ```
 
 ```{r Wrangling Data}
+
+                                  #### ----------------- Data Cleaning ------------------- ####
+
+
 wrangle <- function(path = PATH){
 
   df2 <- read.csv(PATH)
-
+                                                        
 ###
 #---
 ### wrangling
@@ -175,6 +179,11 @@ wrangle <- function(path = PATH){
 
   df2$num = factor(df2$num, levels = c(0, 1, 2, 3, 4), ordered = T)
   
+  ## Basic NA imputation using mode
+  df2$restecg <- factor(df2$restecg,
+                      levels = c(0, 1, 2))
+  
+  
   df2 <- df2 %>% 
     mutate(
       restecg = factor(case_when(
@@ -197,17 +206,17 @@ wrangle <- function(path = PATH){
   return(df2)
 }
 ```
-
+                                          
 ```{r Split data}
 df2 <- wrangle(PATH)
 train_dat <- df2[121:nrow(df2),]
 test_dat <- df2[1:120, ]
 
 save(test_dat, file = "test.RData")
-# write.csv(test_dat, file = "CSV_datasets/test.csv")
+write.csv(test_dat, file = "CSV_datasets/test.csv")
 
 save(train_dat, file = "train.RData")
-# write.csv(train_dat, file = "CSV_datasets/train.csv")
+write.csv(train_dat, file = "CSV_datasets/train.csv")
 ```
 
 ```{r, Basic NA imputation}
@@ -225,18 +234,7 @@ df2$restecg <- factor(df2$restecg,
 ```
 
 ```{r}
-
-
-df2 <- df2 %>% 
-  mutate(
-    restecg = factor(case_when(
-      is.na(restecg) ~ "0",
-      TRUE ~ restecg
-    )
-  ))
-
-
-par(mfrow = c(1, 1))
+                                              #### --------------- Normality and Balanced Distribution test ---------------- ####
 rest_ecg_dist <-  df2 %>% 
   ggplot(aes(restecg)) +
   geom_bar()+
@@ -297,7 +295,7 @@ rm(cat_col, cat_cols, train_dat, test_dat, num_col, num_cols)
 ```
 
 ```{r Imputations rf}
-
+                                                  ####  ---------------- Mice Imputation ----------------- ####
 
 features = c( "trestbps", "thalach", "exang", "oldpeak")
 
@@ -381,7 +379,7 @@ traceplt_rf <- plot(imputed_rf, main = "imputed_rf")
 traceplt_lr <-  plot(imputed_lr, main = "imputed_lr")
 
 ```
-
+                              #### ------------- Parallel Line Assunption Testing ------------- ####
 ```{r testing POLR assumptions}
 dat <- mice::complete(imputed_lr, 1)
 
@@ -436,7 +434,7 @@ fit_ppo <- with(imputed_rf,
 ```
 
 ```{r Rubins Rule}
-
+                      #### ---------------- Pooling coefficients --------------  ####
 # Use Rubins Rule to pool our model
 
 analyses <- fit_ppo$analyses
@@ -541,7 +539,7 @@ actual_classes <- target
 ```
 
 ```{r Diagnost}
-
+                               #### -----------------------Model Diagnosis ---------------------- ####
 Diagnost = data.frame(
   pred = predicted_classes,
   real = as.numeric(actual_classes) - 1 # because R used the lvls which start from 1.
@@ -722,7 +720,6 @@ bin_model_cm2 %>%
 
 1.  Heymans MW, Eekhout I. (2019). *Applied Missing Data Analysis*. Amsterdam: VU University.
 
-2.  Kaggle. (2021). UCI Heart Disease Dataset. <https://www.kaggle.com/datasets/johnsmith88/heart-disease-dataset>
+2.  Kaggle. (2019). UCI Heart Disease Dataset. <https://www.kaggle.com/datasets/johnsmith88/heart-disease-dataset>
 
 3.  Arı E. (2014). Parallel Lines Assumption in Ordinal Logistic Regression and Analysis Approaches. *International Interdisciplinary Journal of Scientific Research*, 1:8-23.
-
