@@ -723,3 +723,4 @@ bin_model_cm2 %>%
 2.  Kaggle. (2019). UCI Heart Disease Dataset. <https://www.kaggle.com/datasets/johnsmith88/heart-disease-dataset>
 
 3.  Arı E. (2014). Parallel Lines Assumption in Ordinal Logistic Regression and Analysis Approaches. *International Interdisciplinary Journal of Scientific Research*, 1:8-23.
+
